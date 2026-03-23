@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reyvn — Buyer Automation Module Walkthrough</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: #1A1A1A; }
+  @keyframes fadeSlide { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const WIDTHS = [175, 82, 145, 130, 245, 160, 145, 120, 85];
+const KEYS = ["a","b","c","d","e","f","g","h","i"];
+const COLS = ["Order / Line","Date Placed","Vendor","Status","Tracking / Shipping","Vendor Order #","Total Cost / Card","Ship Cost Notes","Tax / State"];
+
+const SHEET_ROWS = [
+  {t:"so", a:"EA 153638 Electrical Rack CC", b:"03/10/2026"},
+  {t:"po", a:"line 1, 2 13612", b:"03/10", c:"CAPP", d:"", e:"5 week lead time - requested tracking 03/20", f:"", g:"~14k split payment", h:"129.54", i:""},
+  {t:"po", a:"line 3 13613", b:"03/10", c:"essential electric", d:"Shipped", e:"Shipped 03/11  1Z740E1E0399139476", f:"SO218070", g:"GREEN 2,027.86", h:"ups 37.86", i:""},
+  {t:"po", a:"line 4 13611", b:"03/10", c:"raycap", d:"", e:"scheduled to ship 5/6.", f:"SO130167860", g:"GREEN 1842.99", h:"tbd on ship date", i:""},
+  {t:"po", a:"line 5, 8, 10–12  13610", b:"03/10", c:"elliott electric", d:"Shipped", e:"Shipped 03/11  1ZH23H990330996758", f:"186-12626", g:"BROWN 515.04", h:"54.37", i:""},
+  {t:"po", a:"line 6, 9 13614", b:"03/10", c:"crescent electric", d:"", e:"delivered no tracking", f:"S513939263", g:"GREEN 670.78", h:"free delivery", i:""},
+  {t:"po", a:"line 7 13609", b:"03/10", c:"border states", d:"Shipped", e:"03/18  1ZA11R030301514440", f:"12109859", g:"GREEN 93.93", h:"28.63", i:""},
+  {t:"po", a:"line 13 13615", b:"03/10", c:"thompson lightning", d:"", e:"paid, waiting for shipping eta", f:"431070", g:"GREEN 470.73", h:"60.73", i:""},
+  {t:"po", a:"line 14 13616", b:"03/10/2026", c:"gordonelectricsupply.com", d:"", e:"est ship date 03/20", f:"S3156419", g:"GREEN 95.50", h:"ups ground 18.52", i:"oregon no tax"},
+  {t:"blank"},
+  {t:"so", a:"EA 153610 131024", b:"03/03/2026"},
+  {t:"po", a:"13599", b:"", c:"amazon", d:"Vendor cancelled", e:"Part # changed, new part approved", f:"112-8138342-7172205", g:"GREEN 73.81", h:"", i:"exempt", x:"cancel"},
+  {t:"po", a:"13644", b:"03/19/2026", c:"zoro", d:"Shipped", e:"Shipped 03/20  501825338751", f:"WB5155411423", g:"GREEN 33.78", h:"5.0", i:"EXEMPT"},
+  {t:"blank"},
+  {t:"so", a:"EA 153623 131060", b:"03/10/2026"},
+  {t:"po", a:"13607", b:"03/10/2026", c:"global industrial", d:"RMA initiated", e:"Wrong part — return in progress. Replaced by 13626", f:"28324429", g:"BROWN 60.94", h:"ground 19.99", i:"exempt", x:"rma"},
+  {t:"po", a:"13626", b:"03/13/2026", c:"amazon", d:"Shipped", e:"Shipped 03/20  501825338751", f:"112-3489160-9441064", g:"GREEN 27.06", h:"", i:""},
+  {t:"blank"},
+  {t:"so", a:"EA 153647 QLC RCAG UIS CC", b:"03/10/2026"},
+  {t:"po", a:"line 1–5, 7 13640", b:"03/17", c:"anixter", d:"", e:"noel baca 505-355-4631", f:"30TB2JWR", g:"NET 30 4801.44", h:"???", i:""},
+  {t:"po", a:"line 6 13651", b:"03/20", c:"meca electronics", d:"PO submitted 03/20", e:"", f:"", g:"", h:"", i:""},
+];
+
+const STEPS = [
+  {
+    title: "This is the Buyer's Page",
+    body: "What you're looking at is the same spreadsheet layout we use today — SO rows in blue, PO rows underneath, same nine columns. Reyvn's Buyer's Page should render exactly like this. The spreadsheet is the spec.",
+    highlights: [],
+    overlay: null,
+  },
+  {
+    title: "Alignment = confirmation status",
+    body: "Look at the text alignment. Right-aligned rows have a confirmation number in column F — the vendor accepted the order. Left-aligned rows don't — they're still pending. This is how I scan the page and instantly see what's confirmed and what isn't.",
+    highlights: [1, 3, 7, 8, 20],
+    overlay: null,
+  },
+  {
+    title: "Column F is the order acceptance trigger",
+    body: "This is the single most important column. When a value appears here, it means the vendor accepted the order. In Reyvn, this must emit a state change EVENT — not just save a value. It triggers alignment flip, status advance, and downstream automation.",
+    highlights: [],
+    highlightCol: 5,
+    overlay: null,
+  },
+  {
+    title: "Color tells you what needs action",
+    body: "Red = cancelled. But there's a critical distinction: red on a PO row (like line 13599, Amazon) means VENDOR cancelled — you need to find a new vendor. Red on an SO row means CUSTOMER cancelled — order is dead, do nothing. Same color, opposite meanings. Reyvn must give these distinct colors.",
+    highlights: [11],
+    overlay: null,
+  },
+  {
+    title: "RMA = return + reorder",
+    body: "Orange row (13607, Global Industrial) is an RMA — wrong part shipped. It's not just a cancel. The buyer has to return the item AND reorder from a different vendor. The replacement PO (13626, Amazon) sits right below it. In Reyvn these must be linked database records, not free-text references.",
+    highlights: [15, 16],
+    overlay: null,
+  },
+  {
+    title: "The real complexity: Electrical Rack SO",
+    body: "This single sales order has 9 PO lines across 9 different vendors. Some shipped. Some are waiting. One has a 5-week lead time. One was delivered with no tracking number. One is paid but waiting for a ship date. This is what the buyer manages every day — and this is just ONE order.",
+    highlights: [0,1,2,3,4,5,6,7,8],
+    overlay: null,
+  },
+  {
+    title: "The problem: silent stalls",
+    body: "Line 13612 (CAPP) — no confirmation number, 5 week lead time, and it's been 11 days. Line 13615 (Thompson Lightning) — paid but no ship date. Line 13616 (Gordon Electric) — estimated ship date was 03/20, it's now 03/21. Nothing alerts me to these. I have to eyeball the sheet every morning and do the math in my head. Orders fall through the cracks.",
+    highlights: [1, 7, 8],
+    overlay: null,
+  },
+  {
+    title: "Solution: the priority queue",
+    body: "",
+    highlights: [],
+    overlay: "queue",
+  },
+  {
+    title: "ES status flow — the state machine",
+    body: "",
+    highlights: [],
+    overlay: "es_flow",
+  },
+  {
+    title: "WO status flow",
+    body: "",
+    highlights: [],
+    overlay: "wo_flow",
+  },
+  {
+    title: "What I'm asking the dev team to build",
+    body: "1. The Buyer's Page — this spreadsheet, native in Reyvn, with the same visual rules.\n\n2. The state machine — defined statuses with enforced transitions for ES and WO orders.\n\n3. The priority queue — stall detection that surfaces orders needing attention, with escalating urgency.\n\n4. Auto-triggers — tracking number entered = Shipped, confirmation number entered = alignment flip + status advance.\n\n5. Vendor contacts database — so I stop hunting for email addresses.\n\n6. Document uploads — quotes and confirmations attached to orders for price verification.\n\nI have working code for the state machine, the auto-triggers exist in Apps Script already, and every rule is documented. Let's build this.",
+    highlights: [],
+    overlay: null,
+  },
+];
+
+const ALERTS = [
+  { urgency: 3, vendor: "CAPP", po: "line 1, 2 13612", msg: "No confirmation number after 11 days — follow up immediately", status: "Paid w/o confirmed", so: "EA 153638" },
+  { urgency: 3, vendor: "Dick Blick", po: "13624", msg: "Vendor cancelled — need replacement vendor", status: "Vendor cancelled", so: "EA 153655" },
+  { urgency: 2, vendor: "Gordon Electric", po: "line 14 13616", msg: "Past estimated ship date (03/20) — request tracking", status: "Requested tracking", so: "EA 153638" },
+  { urgency: 2, vendor: "Thompson Lightning", po: "line 13 13615", msg: "Paid but no estimated ship date — request ship date", status: "Requested ship date", so: "EA 153638" },
+  { urgency: 2, vendor: "Global Industrial", po: "13607", msg: "RMA in progress — verify return shipped, check replacement", status: "RMA initiated", so: "EA 153623" },
+  { urgency: 1, vendor: "Parts Super Center", po: "13625", msg: "Requested ship date 03/20 — no response yet", status: "Requested ship date", so: "EA 153616" },
+  { urgency: 1, vendor: "Anixter", po: "line 1–5, 7 13640", msg: "Confirmed & paid 4 days ago — no estimated ship date", status: "Confirmed & paid", so: "EA 153647" },
+  { urgency: 1, vendor: "MECA Electronics", po: "line 6 13651", msg: "PO submitted 1 day ago — monitoring for response", status: "PO submitted", so: "EA 153647" },
+  { urgency: 1, vendor: "Raycap", po: "line 4 13611", msg: "Waiting to ship — est. 05/06, system watching", status: "Waiting to ship", so: "EA 153638" },
+];
+
+function cellStyle(row, ci) {
+  const base = {
+    padding: "3px 5px", fontSize: 11, fontFamily: "'Consolas', 'Courier New', monospace",
+    borderRight: "1px solid #D4D4D4", borderBottom: "1px solid #D4D4D4",
+    width: WIDTHS[ci], minWidth: WIDTHS[ci], maxWidth: WIDTHS[ci],
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    lineHeight: "20px", height: 24, boxSizing: "border-box", transition: "all 0.3s",
+  };
+  if (row.t === "so") return { ...base, background: "#D9E1F2", fontWeight: 700, textAlign: ci===3?"center":"left", color: "#1A1A1A" };
+  if (row.x === "cancel") return { ...base, background: "#FFCCCC", textAlign: ci===3?"center":(row.f?"right":"left"), color: "#4A1A1A" };
+  if (row.x === "rma") return { ...base, background: "#FFD966", textAlign: ci===3?"center":(row.f?"right":"left"), color: "#4A3000" };
+  return { ...base, background: "#FFFFFF", textAlign: ci===3?"center":(row.f?"right":"left"), color: "#1A1A1A" };
+}
+
+function StatusBadge({ status }) {
+  if (!status) return null;
+  const sl = status.toLowerCase();
+  let bg = "#F5F5F0", color = "#444", border = "#DDD";
+  if (sl.includes("shipped") || sl.includes("delivered")) { bg="#EAF3DE"; color="#27500A"; border="#3B6D11"; }
+  else if (sl.includes("confirmed & paid")) { bg="#E1F5EE"; color="#085041"; border="#0F6E56"; }
+  else if (sl.includes("waiting to ship")) { bg="#E1F5EE"; color="#085041"; border="#0F6E56"; }
+  else if (sl.includes("cancelled")) { bg="#FCEBEB"; color="#791F1F"; border="#A32D2D"; }
+  else if (sl.includes("rma")) { bg="#FFF3E0"; color="#633806"; border="#854F0B"; }
+  else if (sl.includes("po submitted")) { bg="#E6F1FB"; color="#0C447C"; border="#185FA5"; }
+  else if (sl.includes("paid w/o")) { bg="#FAEEDA"; color="#633806"; border="#854F0B"; }
+  else if (sl.includes("requested")) { bg="#FAECE7"; color="#712B13"; border="#993C1D"; }
+  return React.createElement('span', { style: { background: bg, color, border: `1px solid ${border}66`, padding: "1px 8px", borderRadius: 10, fontSize: 11, fontWeight: 500, whiteSpace: "nowrap" } }, status);
+}
+
+const ES_STEPS = [
+  { name: "PO submitted", color: "#E6F1FB", border: "#185FA5", sub: "Email sent, clock starts" },
+  { name: "Paid w/o confirmed", color: "#FAEEDA", border: "#854F0B", sub: "Optional — money moved, no order #" },
+  { name: "Order acknowledged", color: "#FAEEDA", border: "#854F0B", sub: "Optional — have order #, not paid" },
+  { name: "Confirmed & paid", color: "#E1F5EE", border: "#0F6E56", sub: "Green light — order is live" },
+  { name: "Requested ship date", color: "#FAECE7", border: "#993C1D", sub: "Optional — asked vendor for date" },
+  { name: "Waiting to ship", color: "#E1F5EE", border: "#0F6E56", sub: "System watches the clock" },
+  { name: "Requested tracking", color: "#FAECE7", border: "#993C1D", sub: "Optional — chasing vendor" },
+  { name: "Shipped", color: "#EAF3DE", border: "#3B6D11", sub: "Tracking entered — PO done" },
+];
+
+const WO_STEPS = [
+  { name: "Confirmed & paid", color: "#E1F5EE", border: "#0F6E56", sub: "Instant at checkout" },
+  { name: "Waiting to ship", color: "#E1F5EE", border: "#0F6E56", sub: "Optional — had ship date from checkout" },
+  { name: "Shipped", color: "#EAF3DE", border: "#3B6D11", sub: "Tracking entered — PO done" },
+];
+
+function Demo() {
+  const [step, setStep] = useState(0);
+  const s = STEPS[step];
+  const totalW = WIDTHS.reduce((a,b)=>a+b,0) + 32;
+
+  const isHighlighted = (ri) => s.highlights && s.highlights.includes(ri);
+  const isColHighlighted = (ci) => s.highlightCol === ci;
+
+  return (
+    <div style={{ fontFamily: "'DM Sans', sans-serif", background: "#1A1A1A", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+
+      {/* Top bar */}
+      <div style={{ background: "#111", padding: "10px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid #333" }}>
+        <div style={{ background: "#E8593C", width: 24, height: 24, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, color: "#fff" }}>R</div>
+        <span style={{ color: "#fff", fontSize: 15, fontWeight: 700 }}>Reyvn</span>
+        <span style={{ color: "#666", fontSize: 13, marginLeft: 4 }}>Buyer Automation Module — Dev Team Walkthrough</span>
+        <span style={{ color: "#555", fontSize: 12, marginLeft: "auto", fontFamily: "monospace" }}>Step {step + 1} of {STEPS.length}</span>
+      </div>
+
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+        {/* Left: Sheet or overlay */}
+        <div style={{ flex: 1, overflow: "auto", background: "#F0F0EC", position: "relative" }}>
+          {s.overlay === "queue" ? (
+            <div style={{ padding: 24 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#1A1A1A", marginBottom: 4 }}>Priority Queue</div>
+              <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>What needs your attention today — sorted by urgency. This replaces eyeballing the spreadsheet every morning.</div>
+              {ALERTS.map((a, i) => {
+                const uc = a.urgency === 3 ? { bg: "#FEF2F2", border: "#A32D2D", dot: "#E24B4A", label: "URGENT" } :
+                           a.urgency === 2 ? { bg: "#FFFAF0", border: "#854F0B", dot: "#EF9F27", label: "FOLLOW UP" } :
+                           { bg: "#F0F7FF", border: "#185FA5", dot: "#378ADD", label: "MONITORING" };
+                return (
+                  <div key={i} style={{ background: "#fff", border: `1px solid ${uc.border}22`, borderLeft: `3px solid ${uc.border}`, borderRadius: 8, padding: "12px 16px", marginBottom: 8, display: "flex", gap: 12, alignItems: "flex-start", animation: `fadeSlide 0.3s ease ${i*0.06}s both` }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: uc.dot, marginTop: 6, flexShrink: 0 }}/>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: uc.border, background: uc.bg, padding: "1px 6px", borderRadius: 3, letterSpacing: "0.05em" }}>{uc.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#1A1A1A" }}>{a.vendor}</span>
+                        <StatusBadge status={a.status}/>
+                      </div>
+                      <div style={{ fontSize: 13, color: "#333", lineHeight: 1.4 }}>{a.msg}</div>
+                      <div style={{ fontSize: 11, color: "#999", marginTop: 3 }}>{a.so} → {a.po}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : s.overlay === "es_flow" ? (
+            <div style={{ padding: 24 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#1A1A1A", marginBottom: 4 }}>ES (Email Submission) Status Flow</div>
+              <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>Each status is a defined state. The system enforces valid transitions. Optional statuses only appear when vendors drop the ball.</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 0, maxWidth: 500 }}>
+                {ES_STEPS.map((st, i) => (
+                  <div key={i}>
+                    <div style={{ background: st.color, border: `2px solid ${st.border}`, borderRadius: 10, padding: "12px 18px", animation: `fadeSlide 0.3s ease ${i*0.08}s both` }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: st.border }}>{st.name}</div>
+                      <div style={{ fontSize: 12, color: st.border, opacity: 0.7 }}>{st.sub}</div>
+                    </div>
+                    {i < ES_STEPS.length - 1 && <div style={{ width: 2, height: 20, background: "#CCC", marginLeft: 30 }}/>}
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 20, background: "#FCEBEB", border: "1px solid #A32D2D44", borderRadius: 8, padding: "10px 16px", maxWidth: 500 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: "#791F1F" }}>Exceptions — can interrupt from any status</div>
+                <div style={{ fontSize: 12, color: "#A32D2D", marginTop: 2 }}>Vendor cancelled · Customer cancelled · RMA initiated</div>
+              </div>
+            </div>
+          ) : s.overlay === "wo_flow" ? (
+            <div style={{ padding: 24 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#1A1A1A", marginBottom: 4 }}>WO (Web Order) Status Flow</div>
+              <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>Much simpler — confirmation and payment happen at checkout. No "Requested tracking" status. WO follow-up is handled by the alert system, not a status change.</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 0, maxWidth: 500 }}>
+                {WO_STEPS.map((st, i) => (
+                  <div key={i}>
+                    <div style={{ background: st.color, border: `2px solid ${st.border}`, borderRadius: 10, padding: "12px 18px", animation: `fadeSlide 0.3s ease ${i*0.08}s both` }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: st.border }}>{st.name}</div>
+                      <div style={{ fontSize: 12, color: st.border, opacity: 0.7 }}>{st.sub}</div>
+                    </div>
+                    {i < WO_STEPS.length - 1 && <div style={{ width: 2, height: 20, background: "#CCC", marginLeft: 30 }}/>}
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 20, background: "#F1EFE8", border: "1px solid #5F5E5A44", borderRadius: 8, padding: "10px 16px", maxWidth: 500 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: "#444" }}>Key difference from ES</div>
+                <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>WO has no "Requested tracking" status. When a WO stalls, the alert system flags it. You check the vendor site or call — instant answer. No multi-day back-and-forth like ES.</div>
+              </div>
+              <div style={{ marginTop: 12, background: "#FCEBEB", border: "1px solid #A32D2D44", borderRadius: 8, padding: "10px 16px", maxWidth: 500 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: "#791F1F" }}>Exceptions — same as ES</div>
+                <div style={{ fontSize: 12, color: "#A32D2D", marginTop: 2 }}>Vendor cancelled · Customer cancelled · RMA initiated</div>
+              </div>
+            </div>
+          ) : (
+            /* Sheet view */
+            <div style={{ overflow: "auto" }}>
+              <div style={{ minWidth: totalW }}>
+                <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 10 }}>
+                  <div style={{ width: 32, minWidth: 32, background: "#2D2D2D", borderRight: "1px solid #444", borderBottom: "1px solid #444", height: 26 }}/>
+                  {COLS.map((col, ci) => (
+                    <div key={ci} style={{
+                      width: WIDTHS[ci], minWidth: WIDTHS[ci], maxWidth: WIDTHS[ci],
+                      background: isColHighlighted(ci) ? "#E8593C" : "#2D2D2D", color: "#FFF", fontSize: 10, fontWeight: 600,
+                      padding: "4px 5px", textAlign: "center", borderRight: "1px solid #444", borderBottom: "1px solid #444",
+                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", height: 26, lineHeight: "18px", boxSizing: "border-box",
+                      transition: "background 0.3s",
+                    }}>{col}</div>
+                  ))}
+                </div>
+                {SHEET_ROWS.map((row, ri) => {
+                  const hl = isHighlighted(ri);
+                  if (row.t === "blank") return (
+                    <div key={ri} style={{ display: "flex" }}>
+                      <div style={{ width: 32, minWidth: 32, background: "#F0F0EC", borderRight: "1px solid #D4D4D4", height: 8 }}/>
+                      <div style={{ flex: 1, height: 8, background: "#F8F8F6", borderBottom: "1px solid #E8E8E4" }}/>
+                    </div>
+                  );
+                  return (
+                    <div key={ri} style={{ display: "flex", outline: hl ? "2px solid #E8593C" : "none", outlineOffset: -1, position: "relative", zIndex: hl ? 5 : 1, transition: "outline 0.3s", borderRadius: hl ? 2 : 0 }}>
+                      <div style={{ width: 32, minWidth: 32, background: "#F5F5F0", borderRight: "1px solid #D4D4D4", borderBottom: "1px solid #D4D4D4", fontSize: 9, color: "#999", textAlign: "center", lineHeight: "20px", fontFamily: "monospace", padding: "3px 0", height: 24, boxSizing: "border-box" }}>{ri + 2}</div>
+                      {KEYS.map((k, ci) => {
+                        const st = cellStyle(row, ci);
+                        if (isColHighlighted(ci)) st.background = row.t === "so" ? "#C5D0E8" : (row.x === "cancel" ? "#F0BBBB" : row.x === "rma" ? "#F0CC55" : "#FFF5EC");
+                        return <div key={ci} style={st} title={row.t === "so" ? (ci===0?row.a:ci===1?row.b:"") : (row[k]||"")}>
+                          {row.t === "so" ? (ci===0?row.a:ci===1?row.b:"") : (row[k]||"")}
+                        </div>;
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right: narration panel */}
+        <div style={{ width: 340, background: "#111", borderLeft: "1px solid #333", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+          <div style={{ flex: 1, padding: 20, overflow: "auto" }}>
+            <div style={{ fontSize: 11, color: "#E8593C", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 8 }}>STEP {step + 1} OF {STEPS.length}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", lineHeight: 1.3, marginBottom: 14 }}>{s.title}</div>
+            <div style={{ fontSize: 13, color: "#BBB", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{s.body}</div>
+          </div>
+
+          {/* Nav */}
+          <div style={{ padding: "12px 20px", borderTop: "1px solid #333", display: "flex", gap: 8 }}>
+            <button onClick={() => setStep(Math.max(0, step-1))} disabled={step===0}
+              style={{ flex: 1, padding: "10px", background: step===0 ? "#222" : "#333", border: "none", borderRadius: 6, color: step===0 ? "#555" : "#fff", fontSize: 13, fontWeight: 600, cursor: step===0 ? "default" : "pointer" }}>
+              ← Back
+            </button>
+            <button onClick={() => setStep(Math.min(STEPS.length-1, step+1))} disabled={step===STEPS.length-1}
+              style={{ flex: 1, padding: "10px", background: step===STEPS.length-1 ? "#222" : "#E8593C", border: "none", borderRadius: 6, color: "#fff", fontSize: 13, fontWeight: 600, cursor: step===STEPS.length-1 ? "default" : "pointer" }}>
+              Next →
+            </button>
+          </div>
+
+          {/* Step dots */}
+          <div style={{ padding: "8px 20px 14px", display: "flex", gap: 4, justifyContent: "center" }}>
+            {STEPS.map((_, i) => (
+              <div key={i} onClick={() => setStep(i)}
+                style={{ width: i===step ? 20 : 8, height: 8, borderRadius: 4, background: i===step ? "#E8593C" : i < step ? "#555" : "#333", cursor: "pointer", transition: "all 0.2s" }}/>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<Demo />, document.getElementById('root'));
+</script>
+</body>
+</html>
